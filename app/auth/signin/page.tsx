@@ -19,14 +19,14 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
 
-  const handleInputChange = (e) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
     // Clear error when user starts typing
     if (error) setError('')
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
@@ -164,7 +164,7 @@ export default function LoginPage() {
           )}
 
           {/* Login Form */}
-          <div className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {/* Email Input */}
             <div className="relative group">
               <Mail className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white/40 group-focus-within:text-purple-400 transition-colors duration-300" size={18} />
@@ -192,6 +192,7 @@ export default function LoginPage() {
                 className="w-full pl-12 pr-12 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/40 focus:outline-none focus:border-purple-400/50 focus:bg-white/10 transition-all duration-300 backdrop-blur-sm"
               />
               <button
+                type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-4 top-1/2 transform -translate-y-1/2 text-white/40 hover:text-white transition-colors duration-300"
               >
@@ -228,6 +229,7 @@ export default function LoginPage() {
                 </span>
               </label>
               <button
+                type="button"
                 onClick={handleForgotPassword}
                 disabled={isLoading}
                 className="text-purple-400 hover:text-purple-300 transition-colors duration-300 font-medium text-sm disabled:opacity-50"
@@ -238,7 +240,7 @@ export default function LoginPage() {
 
             {/* Login Button */}
             <button
-              onClick={handleSubmit}
+              type="submit"
               disabled={isLoading || !isFormValid}
               className="w-full bg-gradient-to-r from-purple-500 via-pink-500 to-cyan-500 hover:from-purple-600 hover:via-pink-600 hover:to-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-purple-500/25 disabled:hover:shadow-none flex items-center justify-center gap-2"
             >
@@ -251,7 +253,7 @@ export default function LoginPage() {
                 'Sign In'
               )}
             </button>
-          </div>
+          </form>
 
           {/* Divider */}
           <div className="relative my-4">
@@ -291,8 +293,6 @@ export default function LoginPage() {
               <span className="font-medium text-sm">GitHub</span>
             </button>
           </div>
-
-
         </div>
       </div>
     </div>
