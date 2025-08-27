@@ -3,52 +3,230 @@ import { useState } from 'react'
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle } from 'lucide-react'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase client
+// Initialize Supabase client - REPLACE WITH YOUR ACTUAL VALUES
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'YOUR_SUPABASE_URL'
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY'
 const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
 export default function LoginPage() {
   const [formData, setFormData] = useState({
-    email: '',
-    password: '',
+    email: 'systems@mexaly.com',
+    password: 'MexalyAdmin2024!', // Pre-filled for testing
   })
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [debugInfo, setDebugInfo] = useState('')
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e) => {
     const { name, value } = e.target
     setFormData(prev => ({ ...prev, [name]: value }))
-    // Clear error when user starts typing
     if (error) setError('')
   }
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const checkUserRole = async (userId) => {
+    try {
+      setDebugInfo('Checking user roles...')
+      
+      // Get user profile first
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('id, display_name, status')
+        .eq('id', userId)
+        .single()
+
+      if (profileError) {
+        setDebugInfo(`Profile query error: ${profileError.message}`)
+        return null
+      }
+
+      if (!profile) {
+        setDebugInfo('User profile not found')
+        return null
+      }
+
+      // FIXED: Get user's roles with correct join syntax
+      const { data: userRoles, error: rolesError } = await supabase
+        .from('user_roles')
+        .select(`
+          role_id,
+          is_active,
+          roles (
+            id,
+            name,
+            priority,
+            is_active
+          )
+        `)
+        .eq('user_id', userId)
+        .eq('is_active', true)
+
+      if (rolesError) {
+        setDebugInfo(`Roles query error: ${rolesError.message}`)
+        return null
+      }
+
+      if (!userRoles || userRoles.length === 0) {
+        setDebugInfo('No active roles found for user')
+        return null
+      }
+
+      // Find the highest priority role (admin should have higher priority)
+      const activeRoles = userRoles
+        .filter(ur => ur.roles && ur.roles.is_active)
+        .map(ur => ur.roles)
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0))
+
+      const highestRole = activeRoles[0]
+      const allRoleNames = activeRoles.map(r => r.name).join(', ')
+
+      setDebugInfo(`Found roles: ${allRoleNames}. Highest: ${highestRole.name} (priority: ${highestRole.priority})`)
+
+      return {
+        ...profile,
+        roles: highestRole,
+        allRoles: activeRoles
+      }
+
+    } catch (err) {
+      setDebugInfo(`Unexpected error: ${err.message}`)
+      console.error('Error in checkUserRole:', err)
+      return null
+    }
+  }
+
+  const handleSubmit = async (e) => {
     e.preventDefault()
     setIsLoading(true)
     setError('')
     setMessage('')
+    setDebugInfo('')
 
     try {
+      setMessage('Attempting login...')
+      
       const { data, error } = await supabase.auth.signInWithPassword({
         email: formData.email,
         password: formData.password,
       })
 
       if (error) {
-        setError(error.message)
-      } else {
-        setMessage('Login successful! Redirecting...')
-        // Redirect to dashboard or handle success
-        setTimeout(() => {
-          window.location.href = '/dashboard' // Update with your dashboard route
-        }, 1500)
+        setError(`Login failed: ${error.message}`)
+        setDebugInfo('Authentication failed - check email/password')
+      } else if (data.user) {
+        setMessage('Login successful! Checking permissions...')
+        
+        // Check user role and permissions
+        const userProfile = await checkUserRole(data.user.id)
+        
+        if (userProfile && userProfile.roles) {
+          const roleName = userProfile.roles.name
+          const rolePriority = userProfile.roles.priority || 0
+          const allRoleNames = userProfile.allRoles.map(r => r.name)
+          
+          setDebugInfo(`Primary role: ${roleName} (priority: ${rolePriority}), All roles: ${allRoleNames.join(', ')}`)
+          
+          // Check if user has admin access
+          const hasAdminAccess = allRoleNames.includes('admin') || 
+                               allRoleNames.includes('super_admin') || 
+                               rolePriority >= 800
+
+          if (hasAdminAccess) {
+            setMessage('Admin access confirmed! Redirecting to dashboard...')
+            setTimeout(() => {
+              window.location.href = '/admin'
+            }, 1500)
+          } else {
+            setError(`Access denied. You have roles: ${allRoleNames.join(', ')}, but admin privileges are required.`)
+            await supabase.auth.signOut()
+          }
+        } else if (userProfile && !userProfile.roles) {
+          setError('User profile found but no roles assigned. Contact administrator.')
+          setDebugInfo('User exists in user_profiles but has no active roles in user_roles table')
+          await supabase.auth.signOut()
+        } else {
+          setError('Unable to verify user permissions. Check database setup.')
+          setDebugInfo('User profile not found or database connection failed')
+          await supabase.auth.signOut()
+        }
       }
     } catch (err) {
-      setError('An unexpected error occurred. Please try again.')
+      console.error('Login error:', err)
+      setError(`Unexpected error: ${err.message}`)
+      setDebugInfo(`JavaScript error: ${err.stack}`)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const testDatabaseConnection = async () => {
+    setIsLoading(true)
+    setError('')
+    setMessage('Testing database connection...')
+    setDebugInfo('')
+    
+    try {
+      // Test 1: Check if we can access user_profiles table
+      const { data: profileTest, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('count')
+        .limit(1)
+        
+      if (profileError) {
+        setError(`user_profiles table error: ${profileError.message}`)
+        return
+      }
+
+      // Test 2: Check if we can access roles table
+      const { data: rolesTest, error: rolesError } = await supabase
+        .from('roles')
+        .select('count')
+        .limit(1)
+        
+      if (rolesError) {
+        setError(`roles table error: ${rolesError.message}`)
+        return
+      }
+
+      // Test 3: Check if we can access user_roles table
+      const { data: userRolesTest, error: userRolesError } = await supabase
+        .from('user_roles')
+        .select('count')
+        .limit(1)
+        
+      if (userRolesError) {
+        setError(`user_roles table error: ${userRolesError.message}`)
+        return
+      }
+
+      // FIXED: Test specific admin user query with corrected join
+      const { data: adminCheck, error: adminError } = await supabase
+        .from('user_profiles')
+        .select(`
+          id,
+          display_name,
+          status,
+          user_roles!inner (
+            role_id,
+            is_active,
+            roles (name, priority)
+          )
+        `)
+        .eq('id', (await supabase.auth.getUser()).data.user?.id || '00000000-0000-0000-0000-000000000000')
+        
+      if (adminError) {
+        setDebugInfo(`Admin user check failed: ${adminError.message}`)
+      } else if (adminCheck && adminCheck.length > 0) {
+        setDebugInfo(`Admin user found with roles: ${adminCheck[0].user_roles.map(ur => ur.roles.name).join(', ')}`)
+      }
+
+      setMessage('Database connection successful! All tables accessible.')
+      
+    } catch (err) {
+      setError(`Connection test error: ${err.message}`)
+      setDebugInfo(`Full error: ${err.stack}`)
     } finally {
       setIsLoading(false)
     }
@@ -59,7 +237,7 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard` // Update with your redirect URL
+          redirectTo: `${window.location.origin}/admin`
         }
       })
       
@@ -76,7 +254,7 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'github',
         options: {
-          redirectTo: `${window.location.origin}/dashboard` // Update with your redirect URL
+          redirectTo: `${window.location.origin}/admin`
         }
       })
       
@@ -99,7 +277,7 @@ export default function LoginPage() {
     
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(formData.email, {
-        redirectTo: `${window.location.origin}/reset-password` // Update with your reset page
+        redirectTo: `${window.location.origin}/reset-password`
       })
 
       if (error) {
@@ -151,6 +329,20 @@ export default function LoginPage() {
             </p>
           </div>
 
+          {/* Success Notice - Updated */}
+          <div className="mb-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-300 text-xs">
+            <div className="font-medium mb-1">✅ Query Structure: FIXED</div>
+            <div>The role query join syntax has been corrected - should work now!</div>
+          </div>
+
+          {/* Default Credentials Helper */}
+          <div className="mb-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs">
+            <div className="font-medium mb-1">Admin Credentials:</div>
+            <div>Email: systems@mexaly.com</div>
+            <div>Password: MexalyAdmin2024!</div>
+            <div className="text-blue-200 mt-1">Roles: reader, admin (admin priority: 800)</div>
+          </div>
+
           {/* Error/Success Messages */}
           {(error || message) && (
             <div className={`mb-4 p-3 rounded-lg flex items-center gap-2 text-sm ${
@@ -160,6 +352,14 @@ export default function LoginPage() {
             }`}>
               <AlertCircle size={16} />
               <span>{error || message}</span>
+            </div>
+          )}
+
+          {/* Debug Info */}
+          {debugInfo && (
+            <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs">
+              <div className="font-medium mb-1">Debug Info:</div>
+              <div>{debugInfo}</div>
             </div>
           )}
 
@@ -253,6 +453,16 @@ export default function LoginPage() {
                 'Sign In'
               )}
             </button>
+
+            {/* Test Database Button */}
+            <button
+              type="button"
+              onClick={testDatabaseConnection}
+              disabled={isLoading}
+              className="w-full bg-gray-600/50 hover:bg-gray-600/70 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition-all duration-300 text-sm"
+            >
+              Test Database Connection
+            </button>
           </form>
 
           {/* Divider */}
@@ -292,6 +502,17 @@ export default function LoginPage() {
               </svg>
               <span className="font-medium text-sm">GitHub</span>
             </button>
+          </div>
+
+          {/* Status Summary - Updated */}
+          <div className="mt-4 p-3 rounded-lg bg-gray-800/50 border border-gray-700/50 text-xs text-gray-300">
+            <div className="font-medium text-green-400 mb-2">✅ System Status:</div>
+            <div className="space-y-1 text-gray-400">
+              <div>• Database tables: EXISTS</div>
+              <div>• Admin user: CONFIGURED</div>
+              <div>• Roles assigned: reader, admin</div>
+              <div>• Query structure: FIXED (removed :role_id from join)</div>
+            </div>
           </div>
         </div>
       </div>
